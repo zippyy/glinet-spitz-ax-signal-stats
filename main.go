@@ -78,7 +78,7 @@ func (s *Svc) HandleRequest(*gserv.Context) gserv.Response {
 }
 
 func execAtCommandAndGetResponse(command string) string {
-	return execCommandAndGetResponse("gl_modem", "-D", "AT", command)
+	return execCommandAndGetResponse("gl_modem", "-B", "1-1.2", "AT", command)
 }
 
 func execCommandAndGetResponse(command string, args ...string) string {

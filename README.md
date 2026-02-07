@@ -14,7 +14,7 @@ sh -c "$(wget -qO- https://raw.githubusercontent.com/zippyy/glinet-spitz-ax-sign
 ## Manual install instructions from the original repo
 
 ```sh
-- How to setup ?
+- How to setup manually
 1. Clone this repo.
 2. Upload openwrt/bin/glinet-spitz-ax-signal-stats to /root
 3. Upload openwrt/etc/init.d/glinet-spitz-ax-signal-stats to /etc/init.d

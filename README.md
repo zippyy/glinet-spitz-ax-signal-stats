@@ -1,4 +1,4 @@
-## GL-iNet Spitz AX X3000 Signal Stats server
+## GL-iNet Spitz AX X3000/Puli AX XE3000 Signal Stats server
 
 - This is a simple HTTP server that returns an autorefreshing page with CA stats to help when adjusting and positioning the router and antennas to get the best signal.
 

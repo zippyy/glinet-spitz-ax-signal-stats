@@ -2,7 +2,7 @@
 
 - This is a simple HTTP server that returns an autorefreshing page with CA stats to help when adjusting and positioning the router and antennas to get the best signal.
 
-- I forked this from [rwasef1830](https://github.com/rwasef1830/glinet-spitz-ax-signal-stats) and created an installer. 
+- I forked this from [rwasef1830](https://github.com/rwasef1830/glinet-spitz-ax-signal-stats) and created an installer that asks for your prefered port, finds the local IP and outputs the url 
 
 
 ## Install (GL.iNet / OpenWrt)

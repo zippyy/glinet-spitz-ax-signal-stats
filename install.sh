@@ -16,68 +16,9 @@ CONF_PATH="/etc/config/${SERVICE_NAME}"
 DEFAULT_PORT="8080"
 DEFAULT_LAN_ONLY="y"
 
-TTY="/dev/tty"
-
 die() { printf "ERROR: %s\n" "$*" >&2; exit 1; }
 need_root() { [ "$(id -u)" -eq 0 ] || die "Run as root."; }
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
-
-say() {
-  if [ -w "$TTY" ]; then
-    printf "%s\n" "$*" > "$TTY"
-  else
-    printf "%s\n" "$*"
-  fi
-}
-
-ask() {
-  prompt="$1"
-  def="${2:-}"
-
-  if [ -r "$TTY" ] && [ -w "$TTY" ]; then
-    if [ -n "$def" ]; then
-      printf "%s [%s]: " "$prompt" "$def" > "$TTY"
-    else
-      printf "%s: " "$prompt" > "$TTY"
-    fi
-    IFS= read -r ans < "$TTY" || ans=""
-    printf "\n" > "$TTY"
-  else
-    if [ -n "$def" ]; then
-      printf "%s [%s]: " "$prompt" "$def" >&2
-    else
-      printf "%s: " "$prompt" >&2
-    fi
-    IFS= read -r ans || ans=""
-    printf "\n" >&2
-  fi
-
-  [ -n "${ans:-}" ] || ans="$def"
-  printf "%s" "$ans"
-}
-
-ask_port() {
-  def="${1:-8080}"
-  port="$(ask "HTTP port" "$def")"
-
-  case "$port" in
-    *[!0-9]*|"") die "Port must be a number." ;;
-  esac
-  [ "$port" -ge 1 ] 2>/dev/null && [ "$port" -le 65535 ] 2>/dev/null || die "Port out of range (1-65535)."
-  printf "%s" "$port"
-}
-
-ask_yn() {
-  prompt="$1"
-  def="${2:-y}"
-  ans="$(ask "$prompt (y/n)" "$def")"
-  ans="$(printf "%s" "$ans" | tr '[:upper:]' '[:lower:]')"
-  case "$ans" in
-    y|yes) printf "y" ;;
-    n|no)  printf "n" ;;
-    *) die "Please answer y or n." ;;
-  esac
-}
 
 fetch() {
   url="$1"
@@ -95,11 +36,122 @@ fetch() {
   return 1
 }
 
+say() {
+  if [ -w /dev/tty ]; then
+    printf "%s\n" "$*" > /dev/tty
+  else
+    printf "%s\n" "$*"
+  fi
+}
+
+ask() {
+  prompt="$1"
+  def="${2:-}"
+
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    if [ -n "$def" ]; then
+      printf "%s [%s]: " "$prompt" "$def" > /dev/tty
+    else
+      printf "%s: " "$prompt" > /dev/tty
+    fi
+    IFS= read -r ans < /dev/tty || ans=""
+    printf "\n" > /dev/tty
+  else
+    if [ -n "$def" ]; then
+      printf "%s [%s]: " "$prompt" "$def" >&2
+    else
+      printf "%s: " "$prompt" >&2
+    fi
+    IFS= read -r ans || ans=""
+    printf "\n" >&2
+  fi
+
+  [ -n "${ans:-}" ] || ans="$def"
+  printf "%s" "$ans"
+}
+
+ask_port() {
+  def="${1:-8080}"
+
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    printf "HTTP port [%s]: " "$def" > /dev/tty
+    IFS= read -r raw < /dev/tty || raw=""
+    printf "\n" > /dev/tty
+  else
+    printf "HTTP port [%s]: " "$def" >&2
+    IFS= read -r raw || raw=""
+    printf "\n" >&2
+  fi
+
+  [ -n "${raw:-}" ] || raw="$def"
+  port="$(printf "%s" "$raw" | tr -cd '0-9')"
+
+  [ -n "$port" ] || die "Port must be a number."
+  [ "$port" -ge 1 ] 2>/dev/null && [ "$port" -le 65535 ] 2>/dev/null || die "Port out of range (1-65535)."
+  printf "%s" "$port"
+}
+
+ask_yn() {
+  prompt="$1"
+  def="${2:-y}"
+  ans="$(ask "$prompt (y/n)" "$def")"
+  ans="$(printf "%s" "$ans" | tr '[:upper:]' '[:lower:]')"
+  case "$ans" in
+    y|yes) printf "y" ;;
+    n|no)  printf "n" ;;
+    *) die "Please answer y or n." ;;
+  esac
+}
+
 banner() {
   say "========================================"
   say " Spitz AX Signal Stats – Installer"
   say "========================================"
   say ""
+}
+
+get_router_ip() {
+  # Prefer GL.iNet LAN IP if detectable, otherwise fall back to first non-loopback IPv4
+  # 1) OpenWrt network.lan.ipaddr
+  if have_cmd uci; then
+    ip="$(uci -q get network.lan.ipaddr 2>/dev/null || true)"
+    if [ -n "${ip:-}" ]; then
+      printf "%s" "$ip"
+      return 0
+    fi
+  fi
+
+  # 2) ip addr show br-lan (common)
+  if have_cmd ip; then
+    ip="$(ip -4 addr show br-lan 2>/dev/null | awk '/inet /{print $2}' | head -n1 | cut -d/ -f1 || true)"
+    if [ -n "${ip:-}" ]; then
+      printf "%s" "$ip"
+      return 0
+    fi
+  fi
+
+  # 3) default route interface -> first IPv4 on it
+  if have_cmd ip; then
+    dev="$(ip route show default 2>/dev/null | awk 'NR==1{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}' || true)"
+    if [ -n "${dev:-}" ]; then
+      ip="$(ip -4 addr show "$dev" 2>/dev/null | awk '/inet /{print $2}' | head -n1 | cut -d/ -f1 || true)"
+      if [ -n "${ip:-}" ]; then
+        printf "%s" "$ip"
+        return 0
+      fi
+    fi
+  fi
+
+  # 4) any non-loopback IPv4
+  if have_cmd ip; then
+    ip="$(ip -4 addr show 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | grep -v '^127\.' | head -n1 || true)"
+    if [ -n "${ip:-}" ]; then
+      printf "%s" "$ip"
+      return 0
+    fi
+  fi
+
+  printf "%s" "192.168.8.1"
 }
 
 write_config() {
@@ -153,20 +205,12 @@ detect_port_flag() {
 }
 
 lan_only_firewall() {
-  # Best-effort: add rules via uci firewall.
-  # If uci firewall isn't present or rules already exist, do nothing.
-  have_uci=1
-  command -v uci >/dev/null 2>&1 || have_uci=0
-  [ "$have_uci" -eq 1 ] || return 0
+  command -v uci >/dev/null 2>&1 || return 0
 
-  # Create allow rule (LAN -> router) for tcp PORT
-  # And explicit deny from wan to router for tcp PORT
-  # We tag them with name so we can detect duplicates.
   allow_name="Allow-${NAME}-LAN"
   deny_name="Deny-${NAME}-WAN"
 
-  # Add allow if missing
-  if ! uci show firewall | grep -q "name='${allow_name}'"; then
+  if ! uci show firewall 2>/dev/null | grep -q "name='${allow_name}'"; then
     rule="$(uci add firewall rule)"
     uci set firewall."$rule".name="$allow_name"
     uci set firewall."$rule".src="lan"
@@ -175,8 +219,7 @@ lan_only_firewall() {
     uci set firewall."$rule".target="ACCEPT"
   fi
 
-  # Add deny if missing
-  if ! uci show firewall | grep -q "name='${deny_name}'"; then
+  if ! uci show firewall 2>/dev/null | grep -q "name='${deny_name}'"; then
     rule="$(uci add firewall rule)"
     uci set firewall."$rule".name="$deny_name"
     uci set firewall."$rule".src="wan"
@@ -194,7 +237,6 @@ start_service() {
   [ "$ENABLED" = "1" ] || return 0
   [ -x "$BIN" ] || return 0
 
-  # Apply LAN-only firewall rules if configured
   [ "$LAN_ONLY" = "y" ] && lan_only_firewall
 
   HELP_OUT="$("$BIN" --help 2>&1 || true)"
@@ -248,6 +290,8 @@ install_everything() {
   "$INIT_PATH" enable >/dev/null 2>&1 || true
   "$INIT_PATH" restart >/dev/null 2>&1 || "$INIT_PATH" start >/dev/null 2>&1 || true
 
+  ip="$(get_router_ip)"
+
   say ""
   say "========================================"
   say " Installed successfully"
@@ -256,7 +300,7 @@ install_everything() {
   say " Service:  $INIT_PATH (enabled)"
   say " Config:   $CONF_PATH"
   say ""
-  say " Open: http://<router-ip>:${PORT}/"
+  say " Open: http://${ip}:${PORT}/"
   say "========================================"
 }
 
@@ -275,17 +319,13 @@ uninstall_everything() {
   if have_cmd uci; then
     allow_name="Allow-${SERVICE_NAME}-LAN"
     deny_name="Deny-${SERVICE_NAME}-WAN"
-    idxs="$(uci show firewall 2>/dev/null | grep -n "name='\(Allow-${SERVICE_NAME}-LAN\|Deny-${SERVICE_NAME}-WAN\)'" | cut -d: -f1 || true)"
-    if [ -n "$idxs" ]; then
-      # Iterate sections and delete matching ones
-      for s in $(uci show firewall 2>/dev/null | sed -n "s/^\(firewall\.@rule\[[0-9]\+\]\)\.name=.*/\1/p" | sort -u); do
-        n="$(uci get "$s.name" 2>/dev/null || true)"
-        [ "$n" = "$allow_name" ] && uci delete "$s" >/dev/null 2>&1 || true
-        [ "$n" = "$deny_name" ] && uci delete "$s" >/dev/null 2>&1 || true
-      done
-      uci commit firewall >/dev/null 2>&1 || true
-      /etc/init.d/firewall restart >/dev/null 2>&1 || true
-    fi
+    for s in $(uci show firewall 2>/dev/null | sed -n "s/^\(firewall\.@rule\[[0-9]\+\]\)\.name=.*/\1/p" | sort -u); do
+      n="$(uci -q get "$s.name" 2>/dev/null || true)"
+      [ "$n" = "$allow_name" ] && uci delete "$s" >/dev/null 2>&1 || true
+      [ "$n" = "$deny_name" ] && uci delete "$s" >/dev/null 2>&1 || true
+    done
+    uci commit firewall >/dev/null 2>&1 || true
+    /etc/init.d/firewall restart >/dev/null 2>&1 || true
   fi
 
   say ""
@@ -308,7 +348,8 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -n "${PORT_OVERRIDE:-}" ]; then
-  DEFAULT_PORT="$PORT_OVERRIDE"
+  DEFAULT_PORT="$(printf "%s" "$PORT_OVERRIDE" | tr -cd '0-9')"
+  [ -n "$DEFAULT_PORT" ] || DEFAULT_PORT="8080"
 fi
 if [ -n "${LAN_OVERRIDE:-}" ]; then
   DEFAULT_LAN_ONLY="$LAN_OVERRIDE"
